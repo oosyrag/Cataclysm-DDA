@@ -425,7 +425,7 @@
       "blackpowder_tolerance": 60,
       "clip_size": 1
     },
-    "min_skills": [ [ "weapon", 2 ], [ "launcher", 1 ] ],
+    "min_skills": [ [ "weapon", 1 ], [ "launcher", 1 ] ],
     "flags": [ "NEVER_JAMS", "RELOAD_EJECT" ],
     "pocket_data": [ { "pocket_type": "MAGAZINE", "ammo_restriction": { "40x46mm": 1 } } ],
     "faults": [ "fault_gun_blackpowder", "fault_gun_dirt" ]
@@ -462,7 +462,7 @@
       "blackpowder_tolerance": 60,
       "clip_size": 1
     },
-    "min_skills": [ [ "weapon", 2 ], [ "launcher", 1 ] ],
+    "min_skills": [ [ "weapon", 1 ], [ "launcher", 1 ] ],
     "flags": [ "NEVER_JAMS", "RELOAD_EJECT" ],
     "pocket_data": [ { "pocket_type": "MAGAZINE", "ammo_restriction": { "40x46mm": 1 } } ],
     "faults": [ "fault_gun_blackpowder", "fault_gun_dirt" ]
