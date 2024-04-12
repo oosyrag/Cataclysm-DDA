@@ -19,17 +19,20 @@ void font_loader::load_throws( const cata_path &path )
         JsonValue json = json_loader::from_path( path );
         JsonObject config = json.get_object();
         if( config.has_string( "typeface" ) ) {
-            typeface.emplace_back( PATH_INFO::fontdir() + config.get_string( "typeface" ) );
+            const std::string path_typeface = PATH_INFO::fontdir() + config.get_string( "typeface") ;
+            typeface.emplace_back( path_typeface );
         } else {
             config.read( "typeface", typeface );
         }
         if( config.has_string( "map_typeface" ) ) {
-            map_typeface.emplace_back( PATH_INFO::fontdir() + config.get_string( "map_typeface" ) );
+            const std::string path_map_typeface = PATH_INFO::fontdir() + config.get_string( "map_typeface") ;
+            map_typeface.emplace_back( path_map_typeface );
         } else {
             config.read( "map_typeface", map_typeface );
         }
         if( config.has_string( "overmap_typeface" ) ) {
-            overmap_typeface.emplace_back( PATH_INFO::fontdir() + config.get_string( "overmap_typeface" ) );
+            const std::string path_overmap_typeface = PATH_INFO::fontdir() + config.get_string( "overmap_typeface") ;
+            overmap_typeface.emplace_back( path_overmap_typeface );
         } else {
             config.read( "overmap_typeface", overmap_typeface );
         }
