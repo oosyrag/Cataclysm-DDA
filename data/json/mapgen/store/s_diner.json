@@ -31,12 +31,11 @@
         ".######c###############.",
         "......```..............."
       ],
+      "palettes": [ "parametrized_walls_palette" ],
       "terrain": {
         "%": [ "t_region_shrub_fruit", "t_region_shrub_decorative" ],
         "[": [ [ "t_region_tree_fruit", 2 ], [ "t_region_tree_nut", 2 ], "t_region_tree_shade" ],
         "!": "t_region_groundcover_urban",
-        "#": "t_brick_wall",
-        "|": "t_wall_w",
         "b": "t_window",
         "c": "t_door_c",
         ";": "t_linoleum_gray",
@@ -79,7 +78,7 @@
         "m": "f_trashcan",
         "o": "f_sink",
         "p": "f_oven",
-        "q": "f_fridge",
+        "q": "f_heavy_duty_fridge",
         "r": "f_locker",
         "I": "f_desk",
         "E": "f_armchair",
@@ -155,9 +154,8 @@
         " 5--------------------5 ",
         "                        "
       ],
-      "palettes": [ "roof_palette" ],
+      "palettes": [ "roof_palette", "parametrized_walls_palette" ],
       "terrain": {
-        "#": "t_brick_wall",
         "o": "t_wall_glass",
         "+": "t_door_c",
         "R": "t_glass_railing",

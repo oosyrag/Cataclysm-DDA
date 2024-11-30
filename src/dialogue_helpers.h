@@ -2,18 +2,27 @@
 #ifndef CATA_SRC_DIALOGUE_HELPERS_H
 #define CATA_SRC_DIALOGUE_HELPERS_H
 
+#include <functional>
+#include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "calendar.h"
+#include "debug.h"
 #include "global_vars.h"
-#include "math_parser.h"
-#include "rng.h"
 #include "translation.h"
-#include "type_id.h"
 
-struct dialogue;
+class JsonArray;
+class JsonObject;
+class math_exp;
 class npc;
+struct dialogue;
+struct const_dialogue;
 
 using talkfunction_ptr = std::add_pointer_t<void ( npc & )>;
 using dialogue_fun_ptr = std::add_pointer_t<void( npc & )>;
@@ -21,6 +30,8 @@ using dialogue_fun_ptr = std::add_pointer_t<void( npc & )>;
 using trial_mod = std::pair<std::string, int>;
 struct dbl_or_var;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 template<class T>
 struct abstract_var_info {
     abstract_var_info( var_type in_type, std::string in_name ): type( in_type ),
@@ -32,6 +43,7 @@ struct abstract_var_info {
     std::string name;
     T default_val;
 };
+#pragma GCC diagnostic pop
 
 using var_info = abstract_var_info<std::string>;
 using translation_var_info = abstract_var_info<translation>;
@@ -41,8 +53,8 @@ struct abstract_str_or_var {
     std::optional<T> str_val;
     std::optional<abstract_var_info<T>> var_val;
     std::optional<T> default_val;
-    std::optional<std::function<T( const dialogue & )>> function;
-    std::string evaluate( dialogue const & ) const;
+    std::optional<std::function<T( const_dialogue const & )>> function;
+    std::string evaluate( const_dialogue const & ) const;
 };
 
 using str_or_var = abstract_str_or_var<std::string>;
@@ -50,7 +62,7 @@ using translation_or_var = abstract_str_or_var<translation>;
 
 struct str_translation_or_var {
     std::variant<str_or_var, translation_or_var> val;
-    std::string evaluate( dialogue const & ) const;
+    std::string evaluate( const_dialogue const & ) const;
 };
 
 struct talk_effect_fun_t {
@@ -80,10 +92,10 @@ struct talk_effect_fun_t {
 };
 
 template<class T>
-std::string read_var_value( const abstract_var_info<T> &info, const dialogue &d );
+std::string read_var_value( const abstract_var_info<T> &info, const_dialogue const &d );
 template<class T>
 std::optional<std::string> maybe_read_var_value(
-    const abstract_var_info<T> &info, const dialogue &d, int call_depth = 0 );
+    const abstract_var_info<T> &info, const_dialogue const &d, int call_depth = 0 );
 
 var_info process_variable( const std::string &type );
 
@@ -130,7 +142,7 @@ struct dbl_or_var_part {
     std::optional<var_info> var_val;
     std::optional<double> default_val;
     std::optional<eoc_math> math_val;
-    double evaluate( dialogue &d ) const;
+    double evaluate( const_dialogue const &d ) const;
 
     bool is_constant() const {
         return dbl_val.has_value();
@@ -158,7 +170,7 @@ struct dbl_or_var {
     bool pair = false;
     dbl_or_var_part min;
     dbl_or_var_part max;
-    double evaluate( dialogue &d ) const;
+    double evaluate( const_dialogue const &d ) const;
 
     bool is_constant() const {
         return !max && min.is_constant();
@@ -183,14 +195,14 @@ struct duration_or_var_part {
     std::optional<var_info> var_val;
     std::optional<time_duration> default_val;
     std::optional<eoc_math> math_val;
-    time_duration evaluate( dialogue &d ) const;
+    time_duration evaluate( const_dialogue const &d ) const;
 };
 
 struct duration_or_var {
     bool pair = false;
     duration_or_var_part min;
     duration_or_var_part max;
-    time_duration evaluate( dialogue &d ) const;
+    time_duration evaluate( const_dialogue const &d ) const;
 };
 
 #endif // CATA_SRC_DIALOGUE_HELPERS_H

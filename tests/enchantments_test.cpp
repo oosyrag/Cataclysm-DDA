@@ -1,5 +1,6 @@
 #include "avatar.h"
 #include "cata_catch.h"
+#include "creature_tracker.h"
 #include "field.h"
 #include "item.h"
 #include "item_group.h"
@@ -11,6 +12,7 @@
 #include "npc.h"
 #include "player_helpers.h"
 #include "point.h"
+#include "talker.h"
 #include "type_id.h"
 #include "units.h"
 
@@ -56,11 +58,11 @@ static void test_generic_ench( avatar &p, enchant_test enc_test )
 
     CHECK( p.has_effect( effect_invisibility ) );
 
-    const field &fields_here = get_map().field_at( p.pos() );
+    const field &fields_here = get_map().field_at( p.pos_bub() );
     CHECK( fields_here.find_field( field_type_id( "fd_shadow" ) ) != nullptr );
 
     // place a zombie next to the avatar
-    const tripoint spot( 61, 60, 0 );
+    const tripoint_bub_ms spot( 61, 60, 0 );
     clear_map();
     monster &zombie = spawn_test_monster( "mon_zombie", spot );
 
@@ -202,7 +204,7 @@ TEST_CASE( "Enchantment_SPEED_test", "[magic][enchantments]" )
     REQUIRE( guy.get_speed_bonus() == 0 );
 }
 
-static int test_melee_attack_attack_speed( Character &guy )
+static int test_melee_attack_attack_speed( Character &guy, Creature &mon )
 {
     int i = 0;
     int prev_attack = 0;
@@ -215,7 +217,7 @@ static int test_melee_attack_attack_speed( Character &guy )
 
     while( i != 10 ) {
         prev_attack = guy.get_moves();
-        guy.melee_attack_abstract( guy, false, matec_id( "" ) );
+        guy.melee_attack_abstract( mon, false, matec_id( "" ) );
         add_msg( "attack %i: attack cost: %i, total amount of moves: %i", i, prev_attack - guy.get_moves(),
                  guy.get_moves() );
         guy.set_stamina( guy.get_stamina_max() ); //Reset reset!
@@ -232,13 +234,15 @@ TEST_CASE( "Enchantment_ATTACK_SPEED_test", "[magic][enchantments]" )
     Character &guy = get_player_character();
     clear_avatar();
     g->place_critter_at( pseudo_debug_mon, tripoint_south );
+    creature_tracker &creatures = get_creature_tracker();
+    Creature &mon = *creatures.creature_at<Creature>( tripoint_south );
     int moves_spent_on_attacks = 0;
 
 
     INFO( "Character, melee skill lvl 10, attacks with no enchantment" );
     // 38 moves per attack
     INFO( "10 attacks cost 380 moves" );
-    moves_spent_on_attacks = test_melee_attack_attack_speed( guy );
+    moves_spent_on_attacks = test_melee_attack_attack_speed( guy, mon );
     REQUIRE( moves_spent_on_attacks == -380 );
 
 
@@ -246,7 +250,7 @@ TEST_CASE( "Enchantment_ATTACK_SPEED_test", "[magic][enchantments]" )
     guy.i_add( item( "test_ATTACK_SPEED_ench_item" ) );
     // 25 moves per attack
     INFO( "10 attacks cost only 250 moves" );
-    moves_spent_on_attacks = test_melee_attack_attack_speed( guy );
+    moves_spent_on_attacks = test_melee_attack_attack_speed( guy, mon );
     REQUIRE( moves_spent_on_attacks == -250 );
     clear_avatar();
 
@@ -255,12 +259,12 @@ TEST_CASE( "Enchantment_ATTACK_SPEED_test", "[magic][enchantments]" )
     guy.i_add( item( "test_ATTACK_SPEED_ench_item_2" ) );
     // 100 moves per attack
     INFO( "10 attacks cost 1000 moves" );
-    moves_spent_on_attacks = test_melee_attack_attack_speed( guy );
+    moves_spent_on_attacks = test_melee_attack_attack_speed( guy, mon );
     REQUIRE( moves_spent_on_attacks == -1000 );
 }
 
 
-static int test_melee_attack_attack_stamina( Character &guy )
+static int test_melee_attack_attack_stamina( Character &guy, Creature &mon )
 {
     int i = 0;
     int stamina_prev = 0;
@@ -271,7 +275,7 @@ static int test_melee_attack_attack_stamina( Character &guy )
 
     while( i != 10 ) {
         stamina_prev = guy.get_stamina();
-        guy.melee_attack_abstract( guy, false, matec_id( "" ) );
+        guy.melee_attack_abstract( mon, false, matec_id( "" ) );
         add_msg( "attack %i: stamina cost: %i, current amount of stamina: %i", i,
                  stamina_prev - guy.get_stamina(),
                  guy.get_stamina() );
@@ -289,6 +293,8 @@ TEST_CASE( "Enchantment_MELEE_STAMINA_CONSUMPTION_test", "[magic][enchantments]"
     Character &guy = get_player_character();
     clear_avatar();
     g->place_critter_at( pseudo_debug_mon, tripoint_south );
+    creature_tracker &creatures = get_creature_tracker();
+    Creature &mon = *creatures.creature_at<Creature>( tripoint_south );
     int stamina_init = 0;
     int stamina_current = 0;
     int stamina_spent = 0;
@@ -299,7 +305,7 @@ TEST_CASE( "Enchantment_MELEE_STAMINA_CONSUMPTION_test", "[magic][enchantments]"
     // 165 stamina per attack
     INFO( "10 attacks cost 1650 stamina" );
     stamina_init = guy.get_stamina();
-    stamina_current = test_melee_attack_attack_stamina( guy );
+    stamina_current = test_melee_attack_attack_stamina( guy, mon );
     stamina_spent = stamina_init - stamina_current;
     REQUIRE( stamina_spent == 1650 );
     clear_avatar();
@@ -310,7 +316,7 @@ TEST_CASE( "Enchantment_MELEE_STAMINA_CONSUMPTION_test", "[magic][enchantments]"
     // 65 stamina per attack
     INFO( "10 attacks cost 650 stamina" );
     stamina_init = guy.get_stamina();
-    stamina_current = test_melee_attack_attack_stamina( guy );
+    stamina_current = test_melee_attack_attack_stamina( guy, mon );
     stamina_spent = stamina_init - stamina_current;
     REQUIRE( stamina_spent == 650 );
     clear_avatar();
@@ -321,9 +327,56 @@ TEST_CASE( "Enchantment_MELEE_STAMINA_CONSUMPTION_test", "[magic][enchantments]"
     // 330 stamina per attack
     INFO( "10 attacks cost 3300 stamina" );
     stamina_init = guy.get_stamina();
-    stamina_current = test_melee_attack_attack_stamina( guy );
+    stamina_current = test_melee_attack_attack_stamina( guy, mon );
     stamina_spent = stamina_init - stamina_current;
     REQUIRE( stamina_spent == 3300 );
+    clear_avatar();
+}
+
+static double test_melee_attack_hit_rate( Character &guy, Creature &mon )
+{
+    int attempted_hits = 0;
+    int successful_hits = 0;
+    int last_hp = mon.get_hp();
+    guy.set_skill_level( skill_melee, 0 );
+    guy.add_effect( effect_debug_no_staggered, 100_seconds );
+    guy.recalculate_enchantment_cache();
+    advance_turn( guy );
+
+    while( attempted_hits != 10 ) {
+        guy.melee_attack_abstract( mon, false, matec_id( "" ) );
+        if( mon.get_hp() != last_hp ) {
+            last_hp = mon.get_hp();
+            successful_hits++;
+        }
+        guy.set_sleepiness( 0 );
+        attempted_hits++;
+    }
+
+    return successful_hits / static_cast<double>( attempted_hits );
+}
+
+TEST_CASE( "Enchantment_MELEE_TO_HIT_test", "[magic][enchantments]" )
+{
+    clear_map();
+    Character &guy = get_player_character();
+    clear_avatar();
+    g->place_critter_at( pseudo_debug_mon, tripoint_south );
+    creature_tracker &creatures = get_creature_tracker();
+    Creature &mon = *creatures.creature_at<Creature>( tripoint_south );
+    double hit_rate = 0;
+
+    INFO( "Character attacks with +100 to hit enchantment" );
+    guy.i_add( item( "test_MELEE_TO_HIT_ench_item_1" ) );
+    hit_rate = test_melee_attack_hit_rate( guy, mon );
+    REQUIRE( hit_rate >= 0.8 );
+    clear_avatar();
+
+
+    INFO( "Character attacks with -100 to hit enchantment" );
+    guy.i_add( item( "test_MELEE_TO_HIT_ench_item_2" ) );
+    hit_rate = test_melee_attack_hit_rate( guy, mon );
+    REQUIRE( hit_rate <= 0.2 );
     clear_avatar();
 }
 
@@ -363,7 +416,7 @@ TEST_CASE( "Enchantment_PAIN_PENALTY_MOD_test", "[magic][enchantments]" )
     INFO( "Character has 50 pain, not affected by enchantments" );
     guy.set_pain( 50 );
     advance_turn( guy );
-    INFO( "Stats are: 6 str, 5 dex, 3 int, 3 per, 85 speed" );
+    INFO( "Stats are: 6 str, 5 dex, 4 int, 4 per, 85 speed" );
     REQUIRE( guy.get_str() == 6 );
     REQUIRE( guy.get_dex() == 5 );
     REQUIRE( guy.get_int() == 4 );
@@ -375,10 +428,10 @@ TEST_CASE( "Enchantment_PAIN_PENALTY_MOD_test", "[magic][enchantments]" )
     guy.i_add( item( "test_PAIN_PENALTY_MOD_ench_item_1" ) );
     guy.recalculate_enchantment_cache();
     advance_turn( guy );
-    INFO( "Stats are: 4 str, 7 dex, 7 int, 0 per, 89 speed" );
+    INFO( "Stats are: 4 str, 7 dex, 7 int, 1 per, 89 speed" );
     REQUIRE( guy.get_str() == 4 );
     REQUIRE( guy.get_dex() == 7 );
     REQUIRE( guy.get_int() == 7 );
-    REQUIRE( guy.get_per() == 0 );
+    REQUIRE( guy.get_per() == 1 );
     REQUIRE( guy.get_speed() == 89 );
 }
