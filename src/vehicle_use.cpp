@@ -372,7 +372,7 @@ void vehicle::build_electronics_menu( veh_menu &menu )
             menu.add( _( "Play arcade machine" ) )
             .hotkey( "ARCADE" )
             .enable( !!arc_itm )
-            .on_submit( [arc_itm] { iuse::portable_game( &get_avatar(), arc_itm, tripoint::zero ); } );
+            .on_submit( [arc_itm] { iuse::portable_game( &get_avatar(), arc_itm, tripoint_bub_ms::zero ); } );
             break;
         }
     }
@@ -486,7 +486,7 @@ void vehicle::smash_security_system()
 void vehicle::autopilot_patrol_check()
 {
     zone_manager &mgr = zone_manager::get_manager();
-    if( mgr.has_near( zone_type_VEHICLE_PATROL, global_square_location(), 60 ) ) {
+    if( mgr.has_near( zone_type_VEHICLE_PATROL, global_square_location(), MAX_VIEW_DISTANCE ) ) {
         enable_patrol();
     } else {
         g->zones_manager();
@@ -580,7 +580,7 @@ double vehicle::engine_cold_factor( const vehicle_part &vp ) const
     }
 
     const tripoint_bub_ms pos = bub_part_pos( vp );
-    double eff_temp = units::to_fahrenheit( get_weather().get_temperature( pos.raw() ) );
+    double eff_temp = units::to_fahrenheit( get_weather().get_temperature( pos ) );
     if( !vp.has_fault_flag( "BAD_COLD_START" ) ) {
         eff_temp = std::min( eff_temp, 20.0 );
     }
@@ -938,7 +938,7 @@ void vehicle::play_music() const
 {
     Character &player_character = get_player_character();
     for( const vpart_reference &vp : get_enabled_parts( "STEREO" ) ) {
-        iuse::play_music( &player_character, vp.pos_bub().raw(), 15, 30 );
+        iuse::play_music( &player_character, vp.pos_bub(), 15, 30 );
     }
 }
 
@@ -1584,7 +1584,8 @@ void vehicle::use_harness( int part, const tripoint_bub_ms &pos )
         return;
     }
     creature_tracker &creatures = get_creature_tracker();
-    const std::function<bool( const tripoint & )> f = [&creatures]( const tripoint & pnt ) {
+    const std::function<bool( const tripoint_bub_ms & )> f = [&creatures](
+    const tripoint_bub_ms & pnt ) {
         monster *mon_ptr = creatures.creature_at<monster>( pnt );
         if( mon_ptr == nullptr ) {
             return false;
@@ -1594,14 +1595,14 @@ void vehicle::use_harness( int part, const tripoint_bub_ms &pos )
                                     f.has_flag( mon_flag_PET_HARNESSABLE ) );
     };
 
-    const std::optional<tripoint> pnt_ = choose_adjacent_highlight(
-            _( "Where is the creature to harness?" ), _( "There is no creature to harness nearby." ), f,
-            false );
+    const std::optional<tripoint_bub_ms> pnt_ = choose_adjacent_highlight(
+                _( "Where is the creature to harness?" ), _( "There is no creature to harness nearby." ), f,
+                false );
     if( !pnt_ ) {
         add_msg( m_info, _( "Never mind." ) );
         return;
     }
-    const tripoint &target = *pnt_;
+    const tripoint_bub_ms &target = *pnt_;
     monster *mon_ptr = creatures.creature_at<monster>( target );
     if( mon_ptr == nullptr ) {
         add_msg( m_info, _( "No creature there." ) );
@@ -1867,7 +1868,7 @@ void vehicle::build_interact_menu( veh_menu &menu, const tripoint &p, bool with_
         .hotkey( "EXAMINE_VEHICLE" )
         .on_submit( [this, vp] {
             const vpart_position non_fake( *this, get_non_fake_part( vp.part_index() ) );
-            const point start_pos = non_fake.mount_pos().raw().rotate( 2 );
+            const point_rel_ms start_pos = non_fake.mount_pos().rotate( 2 );
             g->exam_vehicle( *this, start_pos );
         } );
 
