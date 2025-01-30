@@ -20,6 +20,7 @@
 #include "debug.h"
 #include "enums.h"
 #include "explosion.h"
+#include "field.h"
 #include "game.h"
 #include "item.h"
 #include "itype.h"
@@ -49,6 +50,8 @@ static const efftype_id effect_bleed( "bleed" );
 static const efftype_id effect_harnessed( "harnessed" );
 static const efftype_id effect_pet( "pet" );
 static const efftype_id effect_stunned( "stunned" );
+
+static const flag_id json_flag_CANNOT_TAKE_DAMAGE( "CANNOT_TAKE_DAMAGE" );
 
 static const itype_id fuel_type_animal( "animal" );
 static const itype_id fuel_type_battery( "battery" );
@@ -832,7 +835,7 @@ veh_collision vehicle::part_collision( int part, const tripoint_bub_ms &p,
 {
     // Vertical collisions need to be handled differently
     // All collisions have to be either fully vertical or fully horizontal for now
-    const bool vert_coll = bash_floor || p.z() != sm_pos.z;
+    const bool vert_coll = bash_floor || p.z() != sm_pos.z();
     Creature *critter = get_creature_tracker().creature_at( p, true );
     Character *ph = dynamic_cast<Character *>( critter );
 
@@ -919,7 +922,15 @@ veh_collision vehicle::part_collision( int part, const tripoint_bub_ms &p,
     //part density
     float part_dens = 0.0f;
 
-    if( is_body_collision ) {
+    std::optional<field_entry> potential_impassable_field = here.get_impassable_field_at( p );
+    if( potential_impassable_field.has_value() ) {
+        // impassable fields are not destructible
+        ret.type = veh_coll_other;
+        mass2 = 1000;
+        e = 0.10f;
+        part_dens = 80;
+        ret.target_name = potential_impassable_field.value().name();
+    } else if( is_body_collision ) {
         // Check any monster/NPC/player on the way
         // body
         ret.type = veh_coll_body;
@@ -1104,13 +1115,15 @@ veh_collision vehicle::part_collision( int part, const tripoint_bub_ms &p,
                                   critter->get_armor_type( damage_bash, bodypart_id( "torso" ) );
                 dam = std::max( 0, dam - armor );
                 critter->apply_damage( driver, bodypart_id( "torso" ), dam );
-                if( vpi.has_flag( "SHARP" ) ) {
-                    critter->add_effect( effect_source( driver ), effect_bleed, 1_minutes * rng( 1, dam ),
-                                         critter->get_random_body_part_of_type( body_part_type::type::torso ) );
-                } else if( dam > 18 && rng( 1, 20 ) > 15 ) {
-                    //low chance of lighter bleed even with non sharp objects.
-                    critter->add_effect( effect_source( driver ), effect_bleed, 1_minutes,
-                                         critter->get_random_body_part_of_type( body_part_type::type::torso ) );
+                if( !critter->has_flag( json_flag_CANNOT_TAKE_DAMAGE ) ) {
+                    if( vpi.has_flag( "SHARP" ) ) {
+                        critter->add_effect( effect_source( driver ), effect_bleed, 1_minutes * rng( 1, dam ),
+                                             critter->get_random_body_part_of_type( body_part_type::type::torso ) );
+                    } else if( dam > 18 && rng( 1, 20 ) > 15 ) {
+                        //low chance of lighter bleed even with non sharp objects.
+                        critter->add_effect( effect_source( driver ), effect_bleed, 1_minutes,
+                                             critter->get_random_body_part_of_type( body_part_type::type::torso ) );
+                    }
                 }
                 add_msg_debug( debugmode::DF_VEHICLE_MOVE, "Critter collision damage: %d", dam );
             }
@@ -1253,7 +1266,7 @@ void vehicle::handle_trap( const tripoint_bub_ms &p, vehicle_part &vp_wheel )
                            veh_data.sound_type, veh_data.sound_variant );
         }
         if( veh_data.do_explosion ) {
-            explosion_handler::explosion( driver, p.raw(), veh_data.damage, 0.5f, false, veh_data.shrapnel );
+            explosion_handler::explosion( driver, p, veh_data.damage, 0.5f, false, veh_data.shrapnel );
             // Don't damage wheels with very high durability, such as roller drums or rail wheels
         } else if( damage_done ) {
             // Hit the wheel directly since it ran right over the trap.
@@ -1278,7 +1291,7 @@ void vehicle::handle_trap( const tripoint_bub_ms &p, vehicle_part &vp_wheel )
             const trap &tr = here.tr_at( p );
             if( seen || known ) {
                 // known status has been reset by map::trap_set()
-                player_character.add_known_trap( p.raw(), tr );
+                player_character.add_known_trap( p, tr );
             }
             if( seen && !known ) {
                 // hard to miss!
@@ -1391,7 +1404,7 @@ bool vehicle::check_heli_ascend( Character &p ) const
         p.add_msg_if_player( m_bad, _( "It would be unsafe to try and take off while you are moving." ) );
         return false;
     }
-    if( sm_pos.z + 1 >= OVERMAP_HEIGHT ) {
+    if( sm_pos.z() + 1 >= OVERMAP_HEIGHT ) {
         return false; // don't allow trying to ascend to max zlevel
     }
     map &here = get_map();
@@ -1636,13 +1649,13 @@ void vehicle::precalculate_vehicle_turning( units::angle new_turn_dir, bool chec
     tileray mdir;
     // calculate direction after turn
     mdir.init( new_turn_dir );
-    tripoint dp;
+    tripoint_rel_ms dp;
     bool is_diagonal_movement = std::lround( to_degrees( new_turn_dir ) ) % 90 == 45;
 
     if( std::abs( velocity ) >= 20 ) {
         mdir.advance( velocity < 0 ? -1 : 1 );
-        dp.x = mdir.dx();
-        dp.y = mdir.dy();
+        dp.x() = mdir.dx();
+        dp.y() = mdir.dy();
     }
 
     // number of wheels that will land on rail
@@ -1837,7 +1850,7 @@ vehicle *vehicle::act_on_map()
             g->setremoteveh( nullptr );
         }
 
-        here.on_vehicle_moved( sm_pos.z );
+        here.on_vehicle_moved( sm_pos.z() );
         // Destroy vehicle (sank to nowhere)
         here.destroy_vehicle( this );
         return nullptr;
@@ -2068,7 +2081,7 @@ void vehicle::check_falling_or_floating()
         if( !here.has_flag_ter_or_furn( ter_furn_flag::TFLAG_NO_FLOOR, position ) ) {
             return true;
         }
-        tripoint_bub_ms below( position.xy(), position.z() - 1 );
+        tripoint_bub_ms below( position + tripoint::below );
         return here.supports_above( below );
     };
     // Check under the wheels, if they're supported nothing else matters.
@@ -2275,7 +2288,7 @@ units::angle map::shake_vehicle( vehicle &veh, const int velocity_before,
                                                "the power of the impact!" ), veh.name );
                 unboard_vehicle( part_pos );
             } else {
-                add_msg_if_player_sees( part_pos.raw(), m_bad,
+                add_msg_if_player_sees( part_pos, m_bad,
                                         _( "The %s is hurled from %s's by the power of the impact!" ),
                                         pet->disp_name(), veh.name );
             }

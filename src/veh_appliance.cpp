@@ -1,3 +1,4 @@
+#include "cached_options.h"
 #include "game.h"
 #include "handle_liquid.h"
 #include "imgui/imgui.h"
@@ -24,6 +25,7 @@
 static const activity_id ACT_VEHICLE( "ACT_VEHICLE" );
 
 static const itype_id fuel_type_battery( "battery" );
+static const itype_id itype_power_cord( "power_cord" );
 static const itype_id itype_wall_wiring( "wall_wiring" );
 
 static const quality_id qual_HOSE( "HOSE" );
@@ -195,13 +197,15 @@ void veh_app_interact::init_ui_windows()
     //NOLINTNEXTLINE(cata-use-named-point-constants)
     w_info = catacurses::newwin( height_info, width_info, topleft + point( 1, 1 ) );
 
+    // Try to align the imgui window to be below the header.
+    // to that end, we have some awkward math translating character positions to screen positions here:
     ImVec2 text_metrics = { ImGui::CalcTextSize( "X" ).x, ImGui::GetTextLineHeight() };
     ImVec2 origin = text_metrics * ImVec2{ static_cast<float>( topleft.x ), static_cast<float>( topleft.y + win_height ) };
     ImVec2 size = text_metrics * ImVec2{ static_cast<float>( win_width ), static_cast<float>( height_input ) };
     imenu.desired_bounds = { origin.x,
                              origin.y,
-                             size.x,
-                             size.y + 4.0f * ( ImGui::GetStyle().FramePadding.y + ImGui::GetStyle().WindowBorderSize )
+                             size.x,  // align the width of the input to be the same as the header
+                             -1,      // but let uilist choose the height as it pleases.
                            };
 
     imenu.allow_cancel = true;
@@ -342,7 +346,7 @@ static vehicle_part *pick_part( const std::vector<vehicle_part *> &parts,
             std::string vname = vpr->name();
             if( !vpr->ammo_current().is_null() && vpr->ammo_current() != fuel_type_battery &&
                 !vpr->get_base().empty() ) {
-                units::volume mult = units::legacy_volume_factor / item::find_type(
+                units::volume mult = 250_ml / item::find_type(
                                          vpr->ammo_current() )->stack_size;
                 double vcur = to_liter( vpr->ammo_remaining() * mult );
                 double vmax = to_liter( vpr->ammo_capacity( vpr->get_base().only_item().ammo_type() ) * mult );
@@ -404,10 +408,10 @@ void veh_app_interact::refill()
         const point_rel_ms q = veh->coord_translate( pt->mount );
         map &here = get_map();
         for( const tripoint_bub_ms &p : veh->get_points( true ) ) {
-            act.coord_set.insert( here.getglobal( p ).raw() );
+            act.coord_set.insert( here.get_abs( p ) );
         }
-        act.values.push_back( here.getglobal( veh->pos_bub() ).x() + q.x() );
-        act.values.push_back( here.getglobal( veh->pos_bub() ).y() + q.y() );
+        act.values.push_back( here.get_abs( veh->pos_bub() ).x() + q.x() );
+        act.values.push_back( here.get_abs( veh->pos_bub() ).y() + q.y() );
         act.values.push_back( a_point.x() );
         act.values.push_back( a_point.y() );
         act.values.push_back( -a_point.x() );
@@ -493,11 +497,11 @@ void veh_app_interact::remove()
         act = player_activity( ACT_VEHICLE, to_moves<int>( time ), static_cast<int>( 'O' ) );
         act.str_values.push_back( vpinfo.id.str() );
         for( const tripoint_bub_ms &p : veh->get_points( true ) ) {
-            act.coord_set.insert( here.getglobal( p ).raw() );
+            act.coord_set.insert( here.get_abs( p ) );
         }
-        const tripoint a_point_abs( here.getglobal( a_point_bub ).raw() );
-        act.values.push_back( a_point_abs.x );
-        act.values.push_back( a_point_abs.y );
+        const tripoint_abs_ms a_point_abs( here.get_abs( a_point_bub ) );
+        act.values.push_back( a_point_abs.x() );
+        act.values.push_back( a_point_abs.y() );
         act.values.push_back( a_point.x() );
         act.values.push_back( a_point.y() );
         act.values.push_back( -a_point.x() );
@@ -527,11 +531,18 @@ void veh_app_interact::plug()
 {
     const int part = veh->part_at( veh->coord_translate( a_point ) );
     const tripoint_bub_ms pos = veh->bub_part_pos( part );
-    item cord( "power_cord" );
+    item cord( itype_power_cord );
     cord.link_to( *veh, a_point, link_state::automatic );
     if( cord.get_use( "link_up" ) ) {
         cord.type->get_use( "link_up" )->call( &get_player_character(), cord, pos );
     }
+}
+
+void veh_app_interact::hide()
+{
+    const int part_idx = veh->part_at( veh->coord_translate( a_point ) );
+    vehicle_part &vp = veh->part( part_idx );
+    vp.hidden = !vp.hidden;
 }
 
 void veh_app_interact::populate_app_actions()
@@ -583,6 +594,15 @@ void veh_app_interact::populate_app_actions()
                     string_format( "%s%s", ctxt.get_action_name( "PLUG" ),
                                    //~ An addendum to Plug In's description, as in: Plug in appliance / merge power grid".
                                    veh->is_powergrid() ? _( " / merge power grid" ) : "" ) );
+#if defined(TILES)
+    // Hide
+    if( use_tiles && vp->info().has_flag( flag_WIRING ) ) {
+        app_actions.emplace_back( [this]() {
+            hide();
+        } );
+        imenu.addentry( -1, true, 0, "Hide/Unhide wiring" );
+    }
+#endif
 
     if( veh->is_powergrid() && veh->part_count() > 1 && !vp->info().has_flag( VPFLAG_WALL_MOUNTED ) ) {
         // Disconnect from power grid
@@ -597,7 +617,7 @@ void veh_app_interact::populate_app_actions()
 
     /*************** Get part-specific actions ***************/
     veh_menu menu( veh, "IF YOU SEE THIS IT IS A BUG" );
-    veh->build_interact_menu( menu, veh->mount_to_tripoint( a_point ).raw(), false );
+    veh->build_interact_menu( menu, veh->mount_to_tripoint( a_point ), false );
     const std::vector<veh_menu_item> items = menu.get_items();
     for( size_t i = 0; i < items.size(); i++ ) {
         const veh_menu_item &it = items[i];
@@ -605,7 +625,6 @@ void veh_app_interact::populate_app_actions()
         imenu.addentry( -1, it._enabled, hotkey, it._text );
         app_actions.emplace_back( it._on_submit );
     }
-    imenu.setup();
 }
 
 shared_ptr_fast<ui_adaptor> veh_app_interact::create_or_get_ui_adaptor()

@@ -382,21 +382,42 @@ str_translation_or_var get_str_translation_or_var(
     return ret_val;
 }
 
-tripoint_abs_ms get_tripoint_from_var( std::optional<var_info> var, const_dialogue const &d,
-                                       bool is_npc )
+template<typename T>
+T convert_tripoint_from_var( std::optional<var_info> &var, const_dialogue const &d,
+                             bool is_npc )
 {
     if( var.has_value() ) {
         std::string value = read_var_value( var.value(), d );
         if( !value.empty() ) {
-            return tripoint_abs_ms( tripoint::from_string( value ) );
+            return T( tripoint::from_string( value ) );
         }
     }
     if( !d.has_actor( is_npc ) ) {
         debugmsg( "Tried to access location of invalid %s talker.  %s", is_npc ? "beta" : "alpha",
                   d.get_callstack() );
-        return tripoint_abs_ms::invalid;
+        return T::invalid;
     }
-    return get_map().getglobal( d.const_actor( is_npc )->pos() );
+    return T::invalid;
+}
+
+tripoint_abs_ms get_tripoint_ms_from_var( std::optional<var_info> var, const_dialogue const &d,
+        bool is_npc )
+{
+    tripoint_abs_ms pt = convert_tripoint_from_var<tripoint_abs_ms>( var, d, is_npc );
+    if( pt.is_invalid() ) {
+        return get_map().get_abs( d.const_actor( is_npc )->pos_bub() );
+    }
+    return pt;
+}
+
+tripoint_abs_omt get_tripoint_omt_from_var( std::optional<var_info> var, const_dialogue const &d,
+        bool is_npc )
+{
+    tripoint_abs_omt pt = convert_tripoint_from_var<tripoint_abs_omt>( var, d, is_npc );
+    if( pt.is_invalid() ) {
+        return coords::project_to<coords::omt>( get_map().get_abs( d.const_actor( is_npc )->pos_bub() ) );
+    }
+    return pt;
 }
 
 template<class T>
@@ -609,12 +630,12 @@ void finalize_conditions()
         deferred_math &math = dfr.front();
         try {
             math.exp->parse( math.str, false );
+            math._validate_type();
         } catch( math::exception const &ex ) {
             JsonObject jo{ std::move( math.jo ) };
             clear_deferred_math();
             jo.throw_error_at( "math", ex.what() );
         }
-        math._validate_type();
         dfr.pop();
     }
 }
@@ -937,7 +958,7 @@ conditional_t::func f_has_items_sum( const JsonObject &jo, const std::string_vie
         double charges_present;
         double total_present;
         const Character *you = d.const_actor( is_npc )->get_const_character();
-        inventory inventory_and_around = you->crafting_inventory( you->pos(), PICKUP_RANGE );
+        inventory inventory_and_around = you->crafting_inventory( you->pos_bub(), PICKUP_RANGE );
 
         for( const auto &pair : item_and_amount ) {
             item_to_find = itype_id( pair.first.evaluate( d ) );
@@ -1078,7 +1099,7 @@ conditional_t::func f_at_om_location( const JsonObject &jo, std::string_view mem
 {
     str_or_var location = get_str_or_var( jo.get_member( member ), member, true );
     return [location, is_npc]( const_dialogue const & d ) {
-        const tripoint_abs_omt omt_pos = d.const_actor( is_npc )->global_omt_location();
+        const tripoint_abs_omt omt_pos = d.const_actor( is_npc )->pos_abs_omt();
         const oter_id &omt_ter = overmap_buffer.ter( omt_pos );
         const std::string &omt_str = omt_ter.id().str();
         std::string location_value = location.evaluate( d );
@@ -1105,7 +1126,7 @@ conditional_t::func f_near_om_location( const JsonObject &jo, std::string_view m
     str_or_var location = get_str_or_var( jo.get_member( member ), member, true );
     const dbl_or_var range = get_dbl_or_var( jo, "range", false, 1 );
     return [location, range, is_npc]( const_dialogue const & d ) {
-        const tripoint_abs_omt omt_pos = d.const_actor( is_npc )->global_omt_location();
+        const tripoint_abs_omt omt_pos = d.const_actor( is_npc )->pos_abs_omt();
         for( const tripoint_abs_omt &curr_pos : points_in_radius( omt_pos,
                 range.evaluate( d ) ) ) {
             const oter_id &omt_ter = overmap_buffer.ter( curr_pos );
@@ -1167,7 +1188,7 @@ conditional_t::func f_npc_role_nearby( const JsonObject &jo, std::string_view me
         const std::vector<npc *> available = g->get_npcs_if( [&]( const npc & guy ) {
             return d.const_actor( false )->posz() == guy.posz() &&
                    guy.companion_mission_role_id == role.evaluate( d ) &&
-                   ( rl_dist( d.const_actor( false )->pos(), guy.pos() ) <= 48 );
+                   ( rl_dist( d.const_actor( false )->pos_bub(), guy.pos_bub() ) <= 48 );
         } );
         return !available.empty();
     };
@@ -1391,7 +1412,7 @@ conditional_t::func f_player_see( bool is_npc )
         if( c ) {
             return get_player_view().sees( *c );
         } else {
-            return get_player_view().sees( d.const_actor( is_npc )->pos() );
+            return get_player_view().sees( d.const_actor( is_npc )->pos_bub() );
         }
     };
 }
@@ -1595,7 +1616,7 @@ conditional_t::func f_follower_present( const JsonObject &jo, std::string_view m
 conditional_t::func f_at_safe_space( bool is_npc )
 {
     return [is_npc]( const_dialogue const & d ) {
-        return overmap_buffer.is_safe( d.const_actor( is_npc )->global_omt_location() ) &&
+        return overmap_buffer.is_safe( d.const_actor( is_npc )->pos_abs_omt() ) &&
                d.const_actor( is_npc )->is_safe();
     };
 }
@@ -1627,7 +1648,7 @@ conditional_t::func f_is_controlling_vehicle( bool is_npc )
 {
     return [is_npc]( const_dialogue const & d ) {
         const_talker const *actor = d.const_actor( is_npc );
-        if( const optional_vpart_position &vp = get_map().veh_at( actor->pos() ) ) {
+        if( const optional_vpart_position &vp = get_map().veh_at( actor->pos_bub() ) ) {
             return actor->is_in_control_of( vp->vehicle() );
         }
         return false;
@@ -1638,7 +1659,7 @@ conditional_t::func f_is_driving( bool is_npc )
 {
     return [is_npc]( const_dialogue const & d ) {
         const_talker const *actor = d.const_actor( is_npc );
-        if( const optional_vpart_position &vp = get_map().veh_at( actor->pos() ) ) {
+        if( const optional_vpart_position &vp = get_map().veh_at( actor->pos_bub() ) ) {
             return vp->vehicle().is_moving() && actor->is_in_control_of( vp->vehicle() );
         }
         return false;
@@ -1669,7 +1690,7 @@ conditional_t::func f_is_outside( bool is_npc )
 conditional_t::func f_is_underwater( bool is_npc )
 {
     return [is_npc]( const_dialogue const & d ) {
-        return get_map().is_divable( d.const_actor( is_npc )->pos() );
+        return get_map().is_divable( d.const_actor( is_npc )->pos_bub() );
     };
 }
 
@@ -1691,8 +1712,8 @@ conditional_t::func f_line_of_sight( const JsonObject &jo, std::string_view memb
         with_fields = jo.get_bool( "with_fields" );
     }
     return [range, loc_var_1, loc_var_2, with_fields]( const_dialogue const & d ) {
-        tripoint_bub_ms loc_1 = get_map().bub_from_abs( get_tripoint_from_var( loc_var_1, d, false ) );
-        tripoint_bub_ms loc_2 = get_map().bub_from_abs( get_tripoint_from_var( loc_var_2, d, false ) );
+        tripoint_bub_ms loc_1 = get_map().get_bub( get_tripoint_ms_from_var( loc_var_1, d, false ) );
+        tripoint_bub_ms loc_2 = get_map().get_bub( get_tripoint_ms_from_var( loc_var_2, d, false ) );
 
         return get_map().sees( loc_1, loc_2, range.evaluate( d ), with_fields );
     };
@@ -1730,7 +1751,7 @@ conditional_t::func f_query_tile( const JsonObject &jo, std::string_view member,
     }
     bool z_level = jo.get_bool( "z_level", false );
     return [type, target_var, message, range, z_level, is_npc]( const_dialogue const & d ) {
-        std::optional<tripoint> loc;
+        std::optional<tripoint_bub_ms> loc;
         Character const *ch = d.const_actor( is_npc )->get_const_character();
         if( ch && ch->as_avatar() ) {
             if( type == "anywhere" ) {
@@ -1739,7 +1760,7 @@ conditional_t::func f_query_tile( const JsonObject &jo, std::string_view member,
                     popup.on_top( true );
                     popup.message( "%s", message );
                 }
-                tripoint center = d.const_actor( is_npc )->pos();
+                tripoint_bub_ms center = d.const_actor( is_npc )->pos_bub();
                 const look_around_params looka_params = { true, center, center, false, true, true, z_level };
                 loc = g->look_around( looka_params ).position;
             } else if( type == "line_of_sight" ) {
@@ -1749,10 +1770,10 @@ conditional_t::func f_query_tile( const JsonObject &jo, std::string_view member,
                     popup.message( "%s", message );
                 }
                 avatar dummy;
-                dummy.set_location( get_avatar().get_location() );
+                dummy.set_pos_abs_only( get_avatar().pos_abs() );
                 target_handler::trajectory traj = target_handler::mode_select_only( dummy, range.evaluate( d ) );
                 if( !traj.empty() ) {
-                    loc = traj.back().raw();
+                    loc = traj.back();
                 }
             } else if( type == "around" ) {
                 if( !message.empty() ) {
@@ -1766,7 +1787,7 @@ conditional_t::func f_query_tile( const JsonObject &jo, std::string_view member,
 
         }
         if( loc.has_value() ) {
-            tripoint_abs_ms pos_global = get_map().getglobal( *loc );
+            tripoint_abs_ms pos_global = get_map().get_abs( *loc );
             write_var_value( target_var.type, target_var.name, d,
                              pos_global.to_string() );
         }
@@ -1804,7 +1825,7 @@ conditional_t::func f_map_ter_furn_with_flag( const JsonObject &jo, std::string_
         terrain = false;
     }
     return [terrain, furn_type, loc_var]( const_dialogue const & d ) {
-        tripoint_bub_ms loc = get_map().bub_from_abs( get_tripoint_from_var( loc_var, d, false ) );
+        tripoint_bub_ms loc = get_map().get_bub( get_tripoint_ms_from_var( loc_var, d, false ) );
         if( terrain ) {
             return get_map().ter( loc )->has_flag( furn_type.evaluate( d ) );
         } else {
@@ -1819,7 +1840,7 @@ conditional_t::func f_map_ter_furn_id( const JsonObject &jo, std::string_view me
     var_info loc_var = read_var_info( jo.get_object( "loc" ) );
 
     return [member, furn_type, loc_var]( const_dialogue const & d ) {
-        tripoint_bub_ms loc = get_map().bub_from_abs( get_tripoint_from_var( loc_var, d, false ) );
+        tripoint_bub_ms loc = get_map().get_bub( get_tripoint_ms_from_var( loc_var, d, false ) );
         if( member == "map_terrain_id" ) {
             return get_map().ter( loc ) == ter_id( furn_type.evaluate( d ) );
         } else if( member == "map_furniture_id" ) {
@@ -2102,7 +2123,7 @@ conditional_t::func f_is_on_terrain( const JsonObject &jo, std::string_view memb
     str_or_var terrain_type = get_str_or_var( jo.get_member( member ), member, true );
     return [terrain_type, is_npc]( const_dialogue const & d ) {
         map &here = get_map();
-        return here.ter( d.const_actor( is_npc )->pos() ) == ter_id( terrain_type.evaluate( d ) );
+        return here.ter( d.const_actor( is_npc )->pos_bub() ) == ter_id( terrain_type.evaluate( d ) );
     };
 }
 
@@ -2112,7 +2133,7 @@ conditional_t::func f_is_on_terrain_with_flag( const JsonObject &jo, std::string
     str_or_var terrain_type = get_str_or_var( jo.get_member( member ), member, true );
     return [terrain_type, is_npc]( const_dialogue const & d ) {
         map &here = get_map();
-        return here.ter( d.const_actor( is_npc )->pos() )->has_flag( terrain_type.evaluate( d ) );
+        return here.ter( d.const_actor( is_npc )->pos_bub() )->has_flag( terrain_type.evaluate( d ) );
     };
 }
 
@@ -2124,7 +2145,7 @@ conditional_t::func f_is_in_field( const JsonObject &jo, std::string_view member
         map &here = get_map();
         field_type_id ft = field_type_id( field_type.evaluate( d ) );
         for( const std::pair<const field_type_id, field_entry> &f : here.field_at( d.const_actor(
-                    is_npc )->pos() ) ) {
+                    is_npc )->pos_bub() ) ) {
             if( f.second.get_field_type() == ft ) {
                 return true;
             }
@@ -2148,7 +2169,7 @@ conditional_t::func f_can_see_location( const JsonObject &jo, std::string_view m
     str_or_var target = get_str_or_var( jo.get_member( member ), member, true );
     return [is_npc, target]( const_dialogue const & d ) {
         tripoint_abs_ms target_pos = tripoint_abs_ms( tripoint::from_string( target.evaluate( d ) ) );
-        return d.const_actor( is_npc )->can_see_location( get_map().bub_from_abs( target_pos ).raw() );
+        return d.const_actor( is_npc )->can_see_location( get_map().get_bub( target_pos ) );
     };
 }
 
@@ -2205,7 +2226,7 @@ static std::function<T( const_dialogue const & )> get_get_str_( const JsonObject
         str_or_var target = get_str_or_var( jo.get_member( "target" ), "target" );
         bool use_beta_talker = mutator == "npc_loc_relative";
         return [target, use_beta_talker, ret_func]( const_dialogue const & d ) {
-            tripoint_abs_ms char_pos = get_map().getglobal( d.const_actor( use_beta_talker )->pos() );
+            tripoint_abs_ms char_pos = get_map().get_abs( d.const_actor( use_beta_talker )->pos_bub() );
             tripoint_abs_ms target_pos = char_pos + tripoint::from_string( target.evaluate( d ) );
             return ret_func( target_pos.to_string() );
         };
@@ -2299,9 +2320,9 @@ std::unordered_map<std::string_view, int ( const_talker::* )() const> const f_ge
     { "sleepiness", &const_talker::get_sleepiness },
     { "fine_detail_vision_mod", &const_talker::get_fine_detail_vision_mod },
     { "focus", &const_talker::focus_cur },
+    { "focus_effective", &const_talker::focus_effective_cur },
     { "friendly", &const_talker::get_friendly },
     { "grab_strength", &const_talker::get_grab_strength },
-    { "health", &const_talker::get_health },
     { "height", &const_talker::get_height },
     { "hunger", &const_talker::get_hunger },
     { "instant_thirst", &const_talker::get_instant_thirst },
@@ -2444,18 +2465,18 @@ conditional_t::get_set_dbl( std::string_view checked_value, char scope )
         };
     } else if( checked_value == "pos_x" ) {
         return [is_npc]( dialogue & d, double input ) {
-            tripoint const tr = d.actor( is_npc )->pos();
-            d.actor( is_npc )->set_pos( tripoint( input, tr.y, tr.z ) );
+            tripoint_bub_ms const tr = d.actor( is_npc )->pos_bub();
+            d.actor( is_npc )->set_pos( tripoint_bub_ms( int( input ), tr.y(), tr.z() ) );
         };
     } else if( checked_value == "pos_y" ) {
         return [is_npc]( dialogue & d, double input ) {
-            tripoint const tr = d.actor( is_npc )->pos();
-            d.actor( is_npc )->set_pos( tripoint( tr.x, input, tr.z ) );
+            tripoint_bub_ms const tr = d.actor( is_npc )->pos_bub();
+            d.actor( is_npc )->set_pos( tripoint_bub_ms( tr.x(), int( input ), tr.z() ) );
         };
     } else if( checked_value == "pos_z" ) {
         return [is_npc]( dialogue & d, double input ) {
-            tripoint const tr = d.actor( is_npc )->pos();
-            d.actor( is_npc )->set_pos( tripoint( tr.xy(), input ) );
+            tripoint_bub_ms const tr = d.actor( is_npc )->pos_bub();
+            d.actor( is_npc )->set_pos( tripoint_bub_ms( tr.xy(), input ) );
         };
     } else if( checked_value == "power" ) {
         return [is_npc]( dialogue & d, double input ) {
@@ -2483,10 +2504,10 @@ void deferred_math::_validate_type() const
 {
     math_type_t exp_type = exp->get_type();
     if( exp_type == math_type_t::assign && type != math_type_t::assign ) {
-        jo.throw_error_at( "math",
-                           R"(Assignment operators can't be used in this context.  Did you mean to use "=="? )" );
+        throw math::syntax_error(
+            R"(Assignment operators can't be used in this context.  Did you mean to use "=="? )" );
     } else if( exp_type != math_type_t::assign && type == math_type_t::assign ) {
-        jo.throw_error_at( "math", R"(Eval statement in assignment context has no effect)" );
+        throw math::syntax_error( R"(Eval statement in assignment context has no effect)" );
     }
 }
 

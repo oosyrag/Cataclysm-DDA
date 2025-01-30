@@ -77,8 +77,13 @@ static const efftype_id effect_winded( "winded" );
 
 static const furn_str_id furn_f_safe_c( "f_safe_c" );
 
+static const itype_id itype_grass( "grass" );
+static const itype_id itype_small_plant( "small_plant" );
 static const itype_id itype_swim_fins( "swim_fins" );
+static const itype_id itype_underbrush( "underbrush" );
 
+static const json_character_flag json_flag_CANNOT_ATTACK( "CANNOT_ATTACK" );
+static const json_character_flag json_flag_CANNOT_MOVE( "CANNOT_MOVE" );
 static const json_character_flag json_flag_ITEM_WATERPROOFING( "ITEM_WATERPROOFING" );
 static const json_character_flag json_flag_WATERWALKING( "WATERWALKING" );
 
@@ -235,18 +240,19 @@ bool avatar_action::move( avatar &you, map &m, const tripoint_rel_ms &d )
     if( m.has_flag( ter_furn_flag::TFLAG_MINEABLE, dest_loc ) && g->mostseen == 0 &&
         get_option<bool>( "AUTO_FEATURES" ) && get_option<bool>( "AUTO_MINING" ) &&
         !m.veh_at( dest_loc ) && !you.is_underwater() && !you.has_effect( effect_stunned ) &&
-        !you.has_effect( effect_psi_stunned ) && !is_riding && !you.has_effect( effect_incorporeal ) ) {
+        !you.has_effect( effect_psi_stunned ) && !is_riding && !you.has_effect( effect_incorporeal ) &&
+        !m.impassable_field_at( dest_loc ) && !you.has_flag( json_flag_CANNOT_MOVE ) ) {
         if( weapon && weapon->has_flag( flag_DIG_TOOL ) ) {
             if( weapon->type->can_use( "JACKHAMMER" ) &&
                 weapon->ammo_sufficient( &you ) ) {
                 you.invoke_item( &*weapon, "JACKHAMMER", dest_loc );
                 // don't move into the tile until done mining
-                you.defer_move( dest_loc.raw() );
+                you.defer_move( dest_loc );
                 return true;
             } else if( weapon->type->can_use( "PICKAXE" ) ) {
                 you.invoke_item( &*weapon, "PICKAXE", dest_loc );
                 // don't move into the tile until done mining
-                you.defer_move( dest_loc.raw() );
+                you.defer_move( dest_loc );
                 return true;
             }
         }
@@ -400,12 +406,12 @@ bool avatar_action::move( avatar &you, map &m, const tripoint_rel_ms &d )
             }
             you.melee_attack( critter, true );
             if( critter.is_hallucination() ) {
-                critter.die( &you );
+                critter.die( &m, &you );
             }
             g->draw_hit_mon( dest_loc, critter, critter.is_dead() );
             return false;
         } else if( critter.has_flag( mon_flag_IMMOBILE ) || critter.has_effect( effect_harnessed ) ||
-                   critter.has_effect( effect_ridden ) ) {
+                   critter.has_effect( effect_ridden ) || critter.has_flag( json_flag_CANNOT_MOVE ) ) {
             add_msg( m_info, _( "You can't displace your %s." ), critter.name() );
             return false;
         }
@@ -431,6 +437,13 @@ bool avatar_action::move( avatar &you, map &m, const tripoint_rel_ms &d )
         return false;
     }
 
+    // CANNOT_MOVE allows melee attacking
+    if( you.has_flag( json_flag_CANNOT_MOVE ) ) {
+        you.add_msg_if_player( m_bad,
+                               _( "You cannot move!" ) );
+        return false;
+    }
+
     // GRAB: pre-action checking.
     int dpart = -1;
     const optional_vpart_position vp0 = m.veh_at( you.pos_bub() );
@@ -448,7 +461,7 @@ bool avatar_action::move( avatar &you, map &m, const tripoint_rel_ms &d )
     if( veh0 != nullptr && std::abs( veh0->velocity ) > 100 ) {
         if( veh1 == nullptr ) {
             if( query_yn( _( "Dive from moving vehicle?" ) ) ) {
-                g->moving_vehicle_dismount( dest_loc.raw() );
+                g->moving_vehicle_dismount( dest_loc );
             }
             return false;
         } else if( veh1 != veh0 ) {
@@ -469,7 +482,7 @@ bool avatar_action::move( avatar &you, map &m, const tripoint_rel_ms &d )
     bool fromBoat = veh0 != nullptr;
     bool toBoat = veh1 != nullptr;
     if( is_riding ) {
-        if( !you.check_mount_will_move( dest_loc.raw() ) ) {
+        if( !you.check_mount_will_move( dest_loc ) ) {
             if( you.is_auto_moving() ) {
                 you.abort_automove();
             }
@@ -513,18 +526,18 @@ bool avatar_action::move( avatar &you, map &m, const tripoint_rel_ms &d )
         you.add_msg_if_player( _( "You open the %s." ), door_name );
         // if auto move is on, continue moving next turn
         if( you.is_auto_moving() ) {
-            you.defer_move( dest_loc.raw() );
+            you.defer_move( dest_loc );
         }
         return true;
     }
     if( g->walk_move( dest_loc, via_ramp ) ) {
         return true;
     }
-    if( g->phasing_move_enchant( dest_loc.raw(), you.calculate_by_enchantment( 0,
+    if( g->phasing_move_enchant( dest_loc, you.calculate_by_enchantment( 0,
                                  enchant_vals::mod::PHASE_DISTANCE ) ) ) {
         return true;
     }
-    if( g->phasing_move( dest_loc.raw() ) ) {
+    if( g->phasing_move( dest_loc ) ) {
         return true;
     }
     if( veh_closed_door ) {
@@ -543,7 +556,7 @@ bool avatar_action::move( avatar &you, map &m, const tripoint_rel_ms &d )
         you.mod_moves( -you.get_speed() );
         // if auto move is on, continue moving next turn
         if( you.is_auto_moving() ) {
-            you.defer_move( dest_loc.raw() );
+            you.defer_move( dest_loc );
         }
         return true;
     }
@@ -559,7 +572,7 @@ bool avatar_action::move( avatar &you, map &m, const tripoint_rel_ms &d )
         }
         // if auto move is on, continue moving next turn
         if( you.is_auto_moving() ) {
-            you.defer_move( dest_loc.raw() );
+            you.defer_move( dest_loc );
         }
         return true;
     }
@@ -642,11 +655,11 @@ void avatar_action::swim( map &m, avatar &you, const tripoint_bub_ms &p )
             return;
         }
     }
-    tripoint_abs_ms old_abs_pos = m.getglobal( you.pos_bub() );
+    tripoint_abs_ms old_abs_pos = m.get_abs( you.pos_bub() );
     you.setpos( p );
     g->update_map( you );
 
-    cata_event_dispatch::avatar_moves( old_abs_pos.raw(), you, m );
+    cata_event_dispatch::avatar_moves( old_abs_pos, you, m );
 
     if( m.veh_at( you.pos_bub() ).part_with_feature( VPFLAG_BOARDABLE, true ) ) {
         m.board_vehicle( you.pos_bub(), &you );
@@ -686,6 +699,10 @@ static float rate_critter( const Creature &c )
 
 void avatar_action::autoattack( avatar &you, map &m )
 {
+    if( you.has_flag( json_flag_CANNOT_ATTACK ) ) {
+        add_msg( m_info, _( "You are incapable of attacking!" ) );
+        return;
+    }
     const item_location weapon = you.get_wielded_item();
     int reach = weapon ? weapon->reach_range( you ) : 1;
     std::vector<Creature *> critters = you.get_targetable_creatures( reach, true );
@@ -865,7 +882,7 @@ bool avatar_action::eat_here( avatar &you )
             return true;
         } else {
             here.ter_set( you.pos_bub(), ter_t_grass );
-            item food( "underbrush", calendar::turn, 1 );
+            item food( itype_underbrush, calendar::turn, 1 );
             you.assign_activity( consume_activity_actor( food ) );
             return true;
         }
@@ -878,7 +895,7 @@ bool avatar_action::eat_here( avatar &you )
             return true;
         } else {
             here.furn_set( you.pos_bub(), furn_str_id::NULL_ID() );
-            item food( "small_plant", calendar::turn, 1 );
+            item food( itype_small_plant, calendar::turn, 1 );
             you.assign_activity( consume_activity_actor( food ) );
             return true;
         }
@@ -890,14 +907,14 @@ bool avatar_action::eat_here( avatar &you )
             add_msg( _( "You're too full to graze." ) );
             return true;
         } else {
-            item food( item( "grass", calendar::turn, 1 ) );
+            item food( item( itype_grass, calendar::turn, 1 ) );
             you.assign_activity( consume_activity_actor( food ) );
             here.ter_set( you.pos_bub(), here.get_ter_transforms_into( you.pos_bub() ) );
             return true;
         }
     }
     if( you.has_active_mutation( trait_GRAZER ) ) {
-        const ter_id &ter_underfoot = here.ter( you.pos() );
+        const ter_id &ter_underfoot = here.ter( you.pos_bub() );
         if( ter_underfoot == ter_t_grass_golf || ter_underfoot == ter_t_grass ) {
             add_msg( _( "This grass is too short to graze." ) );
             return true;
@@ -961,6 +978,9 @@ void avatar_action::plthrow( avatar &you, item_location loc,
         return;
     } else if( you.has_effect( effect_incorporeal ) ) {
         add_msg( m_info, _( "You lack the substance to affect anything." ) );
+        return;
+    } else if( you.has_flag( json_flag_CANNOT_ATTACK ) ) {
+        add_msg( m_info, _( "You are incapable of throwing anything!" ) );
         return;
     }
 
@@ -1043,7 +1063,7 @@ void avatar_action::plthrow( avatar &you, item_location loc,
     // otherwise see.
     const tripoint_bub_ms original_player_position = you.pos_bub();
     if( blind_throw_from_pos ) {
-        you.setpos( *blind_throw_from_pos );
+        you.setpos( *blind_throw_from_pos, false );
     }
 
     g->temp_exit_fullscreen();
@@ -1054,7 +1074,7 @@ void avatar_action::plthrow( avatar &you, item_location loc,
 
     // If we previously shifted our position, put ourselves back now that we've picked our target.
     if( blind_throw_from_pos ) {
-        you.setpos( original_player_position );
+        you.setpos( original_player_position, false );
     }
 
     if( trajectory.empty() ) {
@@ -1073,6 +1093,17 @@ void avatar_action::plthrow( avatar &you, item_location loc,
     }
     you.throw_item( trajectory.back(), thrown, blind_throw_from_pos );
     g->reenter_fullscreen();
+}
+
+void avatar_action::plthrow_wielded( avatar &you,
+                                     const std::optional<tripoint_bub_ms> &blind_throw_from_pos )
+{
+    item_location weapon = you.get_wielded_item();
+    if( !weapon ) {
+        add_msg( _( "You aren't holding something you can throw." ) );
+        return;
+    }
+    avatar_action::plthrow( you, weapon, blind_throw_from_pos );
 }
 
 static void update_lum( item_location loc, bool add )
