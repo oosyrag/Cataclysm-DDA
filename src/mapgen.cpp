@@ -83,6 +83,9 @@
 #include "weighted_list.h"
 #include "creature_tracker.h"
 
+static const field_type_str_id field_fd_blood( "fd_blood" );
+static const field_type_str_id field_fd_fire( "fd_fire" );
+
 static const furn_str_id furn_f_ash( "f_ash" );
 static const furn_str_id furn_f_bed( "f_bed" );
 static const furn_str_id furn_f_console( "f_console" );
@@ -97,8 +100,10 @@ static const furn_str_id furn_f_sign( "f_sign" );
 static const furn_str_id furn_f_table( "f_table" );
 static const furn_str_id furn_f_toilet( "f_toilet" );
 static const furn_str_id furn_f_vending_c( "f_vending_c" );
+static const furn_str_id furn_f_vending_c_networked( "f_vending_c_networked" );
 static const furn_str_id furn_f_vending_c_off( "f_vending_c_off" );
 static const furn_str_id furn_f_vending_reinforced( "f_vending_reinforced" );
+static const furn_str_id furn_f_vending_reinforced_networked( "f_vending_reinforced_networked" );
 static const furn_str_id furn_f_vending_reinforced_off( "f_vending_reinforced_off" );
 
 static const item_group_id Item_spawn_data_ammo_rare( "ammo_rare" );
@@ -225,6 +230,69 @@ static constexpr int MON_RADIUS = 3;
 
 static void science_room( map *m, const point_bub_ms &p1, const point_bub_ms &p2, int z,
                           int rotate );
+
+static void GENERATOR_riot_damage( map &md, const tripoint_abs_omt &p )
+{
+    if( p.z() < 0 ) {
+        // for the moment make sure we don't apply this to labs or other places
+        debugmsg( "Riot damage mapgen generator called on underground structure.  This is likely a bug." );
+        return;
+    }
+    std::list<tripoint_bub_ms> all_points_in_map;
+    // Placeholder / FIXME
+    // This assumes that we're only dealing with regular 24x24 OMTs. That is likely not the case.
+    for( int i = 0; i < SEEX * 2; i++ ) {
+        for( int n = 0; n < SEEY * 2; n++ ) {
+            tripoint_bub_ms current_tile( i, n, p.z() );
+            all_points_in_map.push_back( current_tile );
+        }
+    }
+    for( size_t i = 0; i < all_points_in_map.size(); i++ ) {
+        // Pick a tile at random!
+        tripoint_bub_ms current_tile = random_entry( all_points_in_map );
+        // Do nothing at random!;
+        if( x_in_y( 10, 100 ) ) {
+            continue;
+        }
+        // Bash stuff at random!
+        if( x_in_y( 20, 100 ) ) {
+            md.bash( current_tile, rng( 6, 60 ) );
+        }
+        // Move stuff at random!
+        auto item_iterator = md.i_at( current_tile.xy() ).begin();
+        while( item_iterator != md.i_at( current_tile.xy() ).end() ) {
+            if( x_in_y( 30, 100 ) ) {
+                // pick a new spot...
+                tripoint_bub_ms destination_tile( current_tile.x() + rng( -3, 3 ),
+                                                  current_tile.y() + rng( -3, 3 ),
+                                                  current_tile.z() );
+                // oops, don't place out of bounds. just skip moving
+                const bool outbounds_X = destination_tile.x() < 0 || destination_tile.x() >= SEEX * 2;
+                const bool outbounds_Y = destination_tile.y() < 0 || destination_tile.y() >= SEEY * 2;
+                const bool would_be_destroyed = md.has_flag( ter_furn_flag::TFLAG_DESTROY_ITEM, destination_tile );
+                if( outbounds_X || outbounds_Y || would_be_destroyed ) {
+                    item_iterator++;
+                    continue;
+                } else {
+                    item copy( *item_iterator );
+                    // add a copy of our item to the destination...
+                    md.add_item( destination_tile, copy );
+                    // and erase the one at our source.
+                    item_iterator = md.i_at( current_tile.xy() ).erase( item_iterator );
+                }
+            } else {
+                item_iterator++;
+            }
+        }
+        // Set some fields at random!
+        if( x_in_y( 3, 100 ) ) {
+            md.add_field( current_tile, field_fd_blood );
+        }
+        if( x_in_y( 1, 2000 ) ) {
+            md.add_field( current_tile, field_fd_fire );
+        }
+    }
+}
 
 // Assumptions:
 // - The map supplied is empty, i.e. no grid entries are in use
@@ -411,6 +479,11 @@ void map::generate( const tripoint_abs_omt &p, const time_point &when, bool save
                 }
             }
         }
+    }
+
+    // Apply post-process generators
+    if( overmap_buffer.ter( p )->has_flag( oter_flags::pp_generate_riot_damage ) ) {
+        GENERATOR_riot_damage( *this, p );
     }
 
     set_abs_sub( p_sm_base );
@@ -2205,10 +2278,12 @@ class jmapgen_vending_machine : public jmapgen_piece_with_has_vehicle_collision
         mapgen_value<item_group_id> group_id;
         bool lootable;
         bool powered;
+        bool networked;
         jmapgen_vending_machine( const JsonObject &jsi, const std::string_view/*context*/ ) :
             reinforced( jsi.get_bool( "reinforced", false ) )
             , lootable( jsi.get_bool( "lootable", false ) )
-            , powered( jsi.get_bool( "powered", false ) ) {
+            , powered( jsi.get_bool( "powered", false ) )
+            , networked( jsi.get_bool( "networked", false ) ) {
             if( jsi.has_member( "item_group" ) ) {
                 group_id = mapgen_value<item_group_id>( jsi.get_member( "item_group" ) );
             } else {
@@ -2223,7 +2298,7 @@ class jmapgen_vending_machine : public jmapgen_piece_with_has_vehicle_collision
             if( chosen_id.is_null() ) {
                 return;
             }
-            dat.m.place_vending( r, chosen_id, reinforced, lootable, powered );
+            dat.m.place_vending( r, chosen_id, reinforced, lootable, powered, networked );
         }
 
         void check( const std::string &oter_name, const mapgen_parameters &parameters,
@@ -6673,7 +6748,7 @@ void map::place_toilet( const tripoint_bub_ms &p, int charges )
 }
 
 void map::place_vending( const tripoint_bub_ms &p, const item_group_id &type, bool reinforced,
-                         bool lootable, bool powered )
+                         bool lootable, bool powered, bool networked )
 {
     if( !powered ) {
         if( reinforced ) {
@@ -6683,9 +6758,18 @@ void map::place_vending( const tripoint_bub_ms &p, const item_group_id &type, bo
         }
     } else {
         if( reinforced ) {
-            furn_set( p, furn_f_vending_reinforced );
+            if( networked ) {
+                furn_set( p, furn_f_vending_reinforced_networked );
+            } else {
+                furn_set( p, furn_f_vending_reinforced );
+            }
         } else {
-            furn_set( p, furn_f_vending_c );
+            if( networked ) {
+                furn_set( p, furn_f_vending_c_networked );
+            } else {
+                furn_set( p, furn_f_vending_c );
+            }
+
         }
     }
     // The chance to find a non-ransacked vending machine reduces greatly with every day after the Cataclysm,
@@ -6901,7 +6985,7 @@ vehicle *map::add_vehicle( const vproto_id &type, const tripoint_bub_ms &p, cons
     tripoint_bub_sm quotient;
     point_sm_ms remainder;
     std::tie( quotient, remainder ) = coords::project_remain<coords::sm>( p_ms );
-    veh->sm_pos = quotient;
+    veh->sm_pos = abs_sub.xy() + rebase_rel( quotient );
     veh->pos = remainder;
     veh->init_state( *this, veh_fuel, veh_status, force_status );
     veh->place_spawn_items();
@@ -6916,7 +7000,7 @@ vehicle *map::add_vehicle( const vproto_id &type, const tripoint_bub_ms &p, cons
     vehicle *placed_vehicle = placed_vehicle_up.get();
 
     if( placed_vehicle != nullptr ) {
-        submap *place_on_submap = get_submap_at_grid( rebase_rel( placed_vehicle->sm_pos ) );
+        submap *place_on_submap = get_submap_at_grid( placed_vehicle->sm_pos - abs_sub.xy() );
         if( place_on_submap == nullptr ) {
             debugmsg( "Tried to add vehicle at %s but the submap is not loaded",
                       placed_vehicle->sm_pos.to_string() );
@@ -6960,7 +7044,7 @@ std::unique_ptr<vehicle> map::add_vehicle_to_map(
 
     for( std::vector<int>::const_iterator part = frame_indices.begin();
          part != frame_indices.end(); part++ ) {
-        const tripoint_bub_ms p = veh_to_add->bub_part_pos( *part );
+        const tripoint_bub_ms p = veh_to_add->bub_part_pos( this, *part );
 
         if( veh_to_add->part( *part ).is_fake ) {
             continue;
@@ -7002,7 +7086,7 @@ std::unique_ptr<vehicle> map::add_vehicle_to_map(
              */
             std::unique_ptr<RemovePartHandler> handler_ptr;
             bool did_merge = false;
-            for( const tripoint_bub_ms &map_pos : first_veh->get_points( true ) ) {
+            for( const tripoint_abs_ms &map_pos : first_veh->get_points( true ) ) {
                 std::vector<vehicle_part *> parts_to_move = veh_to_add->get_parts_at( map_pos, "",
                         part_status_flag::any );
                 if( !parts_to_move.empty() ) {
@@ -7024,7 +7108,7 @@ std::unique_ptr<vehicle> map::add_vehicle_to_map(
                                   veh_to_add->name, veh_to_add->type.str(),
                                   veh_to_add->pos_abs().to_string(),
                                   to_degrees( veh_to_add->turn_dir ),
-                                  map_pos.to_string() );
+                                  get_bub( map_pos ).to_string() );
                     }
                     did_merge = true;
                     const point_rel_ms target_point = first_veh_parts.front()->mount;
@@ -7044,6 +7128,7 @@ std::unique_ptr<vehicle> map::add_vehicle_to_map(
                         // This is a heuristic: we just assume the default handler is good enough when called
                         // on the main game map. And assume that we run from some mapgen code if called on
                         // another instance.
+                        // TODO: Update logic to be able to work outside of mapgen and in the reality bubble.
                         if( !g || &get_map() != this ) {
                             handler_ptr = std::make_unique<MapgenRemovePartHandler>( *this );
                         }
@@ -7097,7 +7182,7 @@ std::unique_ptr<vehicle> map::add_vehicle_to_map(
         veh_to_add->smash( *this );
     }
 
-    veh_to_add->refresh();
+    veh_to_add->refresh( );
     return veh_to_add;
 }
 
@@ -7213,7 +7298,7 @@ void map::rotate( int turns )
                 sm->rotate( turns );
 
                 for( auto &veh : sm->vehicles ) {
-                    veh->sm_pos = { rebase_bub( p ), z_level };
+                    veh->sm_pos = { abs_sub.xy() + p, z_level };
                 }
 
                 update_vehicle_list( sm, z_level );

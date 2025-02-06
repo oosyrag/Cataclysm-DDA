@@ -1222,6 +1222,12 @@ void iexamine::vending( Character &you, const tripoint_bub_ms &examp )
     int money = you.charges_of( itype_cash_card );
     map_stack vend_items = get_map().i_at( examp );
 
+    bool use_bank = get_map().has_flag_furn( "BANK_NETWORKED", examp );
+
+    if( use_bank ) {
+        money = you.cash + you.charges_of( itype_cash_card );
+    }
+
     if( vend_items.empty() ) {
         add_msg( m_info, _( "The vending machine is empty." ) );
         return;
@@ -1375,7 +1381,13 @@ void iexamine::vending( Character &you, const tripoint_bub_ms &examp )
             }
 
             money -= iprice;
-            you.use_charges( itype_cash_card, iprice );
+
+            if( iprice < you.charges_of( itype_cash_card ) ) {
+                // necessary to check just your cash card charges here because aftershock charges your cards first then your bank
+                you.use_charges( itype_cash_card, iprice );
+            } else if( use_bank ) {
+                you.cash -= iprice;
+            }
             you.i_add_or_drop( *cur_item );
 
             vend_items.erase( cur_item );
@@ -1553,10 +1565,10 @@ void iexamine::elevator( Character &you, const tripoint_bub_ms &examp )
     }
 
     for( vehicle *v : vehs.v ) {
-        tripoint_bub_ms const p = _rotate_point_sm( { v->pos_bub().xy(), movez},
+        tripoint_bub_ms const p = _rotate_point_sm( { v->pos_bub( &here ).xy(), movez},
                                   erot,
                                   sm_orig );
-        here.displace_vehicle( *v, p - v->pos_bub() );
+        here.displace_vehicle( *v, p - v->pos_bub( &here ) );
         v->turn( erot * 90_degrees );
         v->face = tileray( v->turn_dir );
         v->precalc_mounts( 0, v->turn_dir, v->pivot_anchor[0] );
@@ -2052,7 +2064,7 @@ void iexamine::locked_object( Character &you, const tripoint_bub_ms &examp )
     // Check if the locked thing is a lockable door part.
     if( veh ) {
         std::vector<vehicle_part *> parts_at_target = veh->vehicle().get_parts_at(
-                    examp, "LOCKABLE_DOOR", part_status_flag::available );
+                    &here, examp, "LOCKABLE_DOOR", part_status_flag::available );
         if( !parts_at_target.empty() ) {
             locked_part = veh->vehicle().next_part_to_unlock(
                               veh->vehicle().index_of_part( parts_at_target.front() ) );
@@ -2121,7 +2133,7 @@ void iexamine::locked_object_pickable( Character &you, const tripoint_bub_ms &ex
 
     if( veh ) {
         const std::vector<vehicle_part *> parts_at_target = veh->vehicle().get_parts_at(
-                    examp, "LOCKABLE_DOOR", part_status_flag::available );
+                    &here, examp, "LOCKABLE_DOOR", part_status_flag::available );
         if( !parts_at_target.empty() ) {
             locked_part = veh->vehicle().next_part_to_unlock(
                               veh->vehicle().index_of_part( parts_at_target.front() ) );

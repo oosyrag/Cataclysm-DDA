@@ -219,14 +219,14 @@ static bool handle_spillable_contents( Character &c, item &it, map &m )
 static void put_into_vehicle( Character &c, item_drop_reason reason, const std::list<item> &items,
                               const vpart_reference &vpr )
 {
+    map &here = get_map();
     if( items.empty() ) {
         return;
     }
     c.invalidate_weight_carried_cache();
     vehicle_part &vp = vpr.part();
     vehicle &veh = vpr.vehicle();
-    const tripoint_bub_ms where = veh.bub_part_pos( vp );
-    map &here = get_map();
+    const tripoint_bub_ms where = veh.bub_part_pos( &here, vp );
     int items_did_not_fit_count = 0;
     int into_vehicle_count = 0;
     const std::string part_name = vp.info().name();
@@ -589,8 +589,8 @@ static bool vehicle_activity( Character &you, const tripoint_bub_ms &src_loc, in
     // so , NPCs can remove the last part on a position, then there is no vehicle there anymore,
     // for someone else who stored that position at the start of their activity.
     // so we may need to go looking a bit further afield to find it , at activities end.
-    for( const tripoint_bub_ms &pt : veh->get_points( true ) ) {
-        you.activity.coord_set.insert( here.get_abs( pt ) );
+    for( const tripoint_abs_ms &pt : veh->get_points( true ) ) {
+        you.activity.coord_set.insert( pt );
     }
     // values[0]
     you.activity.values.push_back( here.get_abs( src_loc ).x() );
@@ -1058,7 +1058,7 @@ static activity_reason_info can_do_activity_there( const activity_id &act, Chara
         if( act == ACT_VEHICLE_DECONSTRUCTION ) {
             // find out if there is a vehicle part here we can remove.
             std::vector<vehicle_part *> parts =
-                veh->get_parts_at( src_loc, "", part_status_flag::any );
+                veh->get_parts_at( &here, src_loc, "", part_status_flag::any );
             for( vehicle_part *part_elem : parts ) {
                 const int vpindex = veh->index_of_part( part_elem, true );
                 // if part is not on this vehicle, or if its attached to another part that needs to be removed first.
@@ -1101,7 +1101,7 @@ static activity_reason_info can_do_activity_there( const activity_id &act, Chara
             }
         } else if( act == ACT_VEHICLE_REPAIR ) {
             // find out if there is a vehicle part here we can repair.
-            std::vector<vehicle_part *> parts = veh->get_parts_at( src_loc, "", part_status_flag::any );
+            std::vector<vehicle_part *> parts = veh->get_parts_at( &here, src_loc, "", part_status_flag::any );
             for( vehicle_part *part_elem : parts ) {
                 const vpart_info &vpinfo = part_elem->info();
                 int vpindex = veh->index_of_part( part_elem, true );
@@ -3809,8 +3809,7 @@ int get_auto_consume_moves( Character &you, const bool food )
 bool try_fuel_fire( player_activity &act, Character &you, const bool starting_fire )
 {
     const tripoint_bub_ms pos = you.pos_bub();
-    std::vector<tripoint_bub_ms> adjacent = closest_points_first( pos, PICKUP_RANGE );
-    adjacent.erase( adjacent.begin() );
+    std::vector<tripoint_bub_ms> adjacent = closest_points_first( pos, 1, PICKUP_RANGE );
 
     map &here = get_map();
     std::optional<tripoint_bub_ms> best_fire =
