@@ -226,6 +226,8 @@ TEST_CASE( "monster_throwing_sanity_test", "[throwing],[balance]" )
         REQUIRE( rl_dist( test_monster.pos_abs(), target->pos_abs() ) <= 5 );
         statistics<int> damage_dealt;
         statistics<bool> hits;
+        statistics<bool> misses;
+        statistics<bool> torso_hits;
         epsilon_threshold threshold{ expected_damage, 2.5 };
         do {
             you.set_all_parts_hp_to_max();
@@ -234,12 +236,16 @@ TEST_CASE( "monster_throwing_sanity_test", "[throwing],[balance]" )
             you.clear_effects();
             you.set_dodges_left( 1 );
             int prev_hp = you.get_hp();
+            int prev_torso_hp = you.get_hp( bodypart_id( "torso" ) );
             // monster shoots the player
             REQUIRE( attack->call( test_monster ) == true );
             // how much damage did it do?
             // Player-centric test in throwing_test.cpp ranges from 2 - 8 damage at point-blank range.
             int current_hp = you.get_hp();
+            int torso_hp = you.get_hp( bodypart_id( "torso" ) );
             hits.add( current_hp < prev_hp );
+            misses.add( current_hp == prev_hp);
+            torso_hits.add( torso_hp < prev_torso_hp);
             damage_dealt.add( prev_hp - current_hp );
             test_monster.ammo[ itype_rock ]++;
         } while( damage_dealt.n() < 100 || damage_dealt.uncertain_about( threshold ) );
@@ -248,6 +254,8 @@ TEST_CASE( "monster_throwing_sanity_test", "[throwing],[balance]" )
         CAPTURE( distance );
         INFO( "Num hits: " << damage_dealt.n() );
         INFO( "Hit rate: " << hits.avg() );
+        INFO( "Num misses: " << misses.sum() );
+        INFO( "Torso hits: " << torso_hits.sum() );
         INFO( "Avg total damage: " << damage_dealt.avg() );
         INFO( "Dmg Lower: " << damage_dealt.lower() << " Dmg Upper: " << damage_dealt.upper() );
         CHECK( damage_dealt.test_threshold( threshold ) );
