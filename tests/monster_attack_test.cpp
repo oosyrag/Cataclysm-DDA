@@ -254,7 +254,6 @@ TEST_CASE( "monster_throwing_sanity_test", "[throwing],[balance]" )
         CAPTURE( distance );
         INFO( "Num hits: " << damage_dealt.n() );
         INFO( "Hit rate: " << hits.avg() );
-        INFO( "Num misses: " << misses.sum() );
         INFO( "Torso hits: " << torso_hits.sum() );
         INFO( "Avg total damage: " << damage_dealt.avg() );
         INFO( "Dmg Lower: " << damage_dealt.lower() << " Dmg Upper: " << damage_dealt.upper() );
