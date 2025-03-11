@@ -258,7 +258,7 @@ TEST_CASE( "monster_throwing_sanity_test", "[throwing],[balance]" )
         INFO( "Hit rate: " << hits.avg() );
         INFO( "Torso hits: " << torso_hits.sum() );
         float torso_ratio = torso_hits.sum() / hits.sum();
-        INFO( "Torso homing factor: " << torso_ratio << " (Expected: 0.7222)");
+        INFO( "Torso homing factor: " << torso_ratio << " (Expected: 0.7222?)");
         INFO( "Avg total damage: " << damage_dealt.avg() );
         INFO( "Dmg Lower: " << damage_dealt.lower() << " Dmg Upper: " << damage_dealt.upper() );
         CHECK( damage_dealt.test_threshold( threshold ) );
